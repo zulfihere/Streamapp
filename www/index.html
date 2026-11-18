@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyStream</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    :root { --green: #00be06; --bg: #111319; --card: #1c1f26; --text: #fff; --muted: #8b92a5; --danger: #ef4444; }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: sans-serif; margin: 0; padding: 12px; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .logo { color: var(--green); font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+    .search { width: 100%; background: var(--card); border: 1px solid #2a2e39; color: #fff; padding: 10px 14px; border-radius: 20px; font-size: 14px; margin-bottom: 12px; outline: none; }
+    .tabs { display: flex; gap: 16px; overflow-x: auto; margin-bottom: 14px; border-bottom: 1px solid #222630; padding-bottom: 8px; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .tab.active { color: var(--green); border-bottom: 2px solid var(--green); padding-bottom: 6px; }
+    .player-wrap { background: #000; border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
+    video { width: 100%; aspect-ratio: 16/9; display: block; }
+    .player-controls-bar { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 16px 0; }
+    .now-playing { font-size: 16px; font-weight: bold; }
+    .download-row { display: flex; gap: 8px; align-items: center; }
+    .res-select { background: var(--card); color: var(--text); border: 1px solid #2f3441; padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; }
+    .download-btn { background: var(--card); color: var(--green); border: 1px solid var(--green); padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; flex-grow: 1; }
+    .download-btn:active { background: var(--green); color: #000; }
+    .episodes { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+    .ep-btn { background: var(--card); color: #fff; border: 1px solid #2f3441; padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .ep-btn.active { background: var(--green); color: #000; font-weight: bold; border-color: var(--green); }
+    h3 { font-size: 16px; margin: 14px 0 10px 0; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .card { cursor: pointer; }
+    .poster { width: 100%; aspect-ratio: 2/3; background: var(--card); border-radius: 8px; background-size: cover; background-position: center; margin-bottom: 6px; position: relative; }
+    .badge { position: absolute; top: 6px; right: 6px; background: var(--green); color: #000; font-size: 10px; font-weight: bold; padding: 2px 5px; border-radius: 4px; }
+    .title { font-size: 12px; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Downloads View Styles */
+    .section-view { display: none; }
+    .section-view.active { display: block; }
+    .download-item { display: flex; align-items: center; justify-content: space-between; background: var(--card); padding: 10px; border-radius: 8px; margin-bottom: 8px; gap: 12px; }
+    .download-info { flex-grow: 1; cursor: pointer; }
+    .download-title { font-size: 14px; font-weight: bold; margin-bottom: 4px; }
+    .download-status { font-size: 11px; color: var(--green); }
+    .delete-dl { background: transparent; color: var(--danger); border: none; font-size: 14px; cursor: pointer; padding: 6px; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo">MyStream</div>
+  </div>
+
+  <input type="text" id="searchInput" class="search" placeholder="Search donghua, dramas, movies..." onkeyup="filterCatalog()">
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('home', this)">For You</div>
+    <div class="tab" onclick="switchTab('category', this, 'Donghua')">Chinese Donghua</div>
+    <div class="tab" onclick="switchTab('category', this, 'Drama')">Dramas</div>
+    <div class="tab" onclick="switchTab('category', this, 'Anime')">Anime</div>
+    <div class="tab" onclick="switchTab('category', this, 'Movie')">Movies</div>
+    <div class="tab" onclick="switchTab('downloads', this)">Downloads (<span id="dlCount">0</span>)</div>
+  </div>
+
+  <!-- HOME / BROWSE VIEW -->
+  <div id="homeView" class="section-view active">
+    <div class="player-wrap">
+      <video id="player" controls playsinline></video>
+    </div>
+    
+    <div class="player-controls-bar">
+      <div class="now-playing" id="nowPlaying">Select a title to play</div>
+      <div class="download-row">
+        <select id="resolutionSelect" class="res-select">
+          <option value="1080p">1080p (FHD)</option>
+          <option value="720p" selected>720p (HD)</option>
+          <option value="480p">480p (SD)</option>
+        </select>
+        <button class="download-btn" id="currentDlBtn" onclick="downloadCurrentEpisode()">📥 Download Episode</button>
+      </div>
+    </div>
+
+    <div class="episodes" id="episodeList"></div>
+
+    <h3 id="sectionHeading">Featured & Chinese Donghua</h3>
+    <div class="grid" id="catalogGrid"></div>
+  </div>
+
+  <!-- DOWNLOADS VIEW -->
+  <div id="downloadsView" class="section-view">
+    <h3>Downloaded Episodes</h3>
+    <div id="downloadsList"></div>
+  </div>
+
+  <script>
+    const catalog = [
+      {
+        title: "Soul Land (Douluo Dalu)",
+        category: "Donghua",
+        badge: "DONGHUA",
+        poster: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=400",
+        episodes: [
+          { name: "Ep 1", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" },
+          { name: "Ep 2", url: "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8" },
+          { name: "Ep 3", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+        ]
+      },
+      {
+        title: "Battle Through the Heavens",
+        category: "Donghua",
+        badge: "1080P",
+        poster: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=400",
+        episodes: [
+          { name: "Ep 1", url: "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8" },
+          { name: "Ep 2", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+        ]
+      },
+      {
+        title: "A Record of a Mortal's Journey",
+        category: "Donghua",
+        badge: "HOT",
+        poster: "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=400",
+        episodes: [
+          { name: "Ep 1", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" },
+          { name: "Ep 2", url: "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8" }
+        ]
+      },
+      {
+        title: "Swallowed Star",
+        category: "Donghua",
+        badge: "SCI-FI",
+        poster: "https://images.unsplash.com/photo-1614728263952-84ea256f9679?w=400",
+        episodes: [
+          { name: "Ep 1", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+        ]
+      },
+      {
+        title: "Throne of Seal",
+        category: "Donghua",
+        badge: "NEW",
+        poster: "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=400",
+        episodes: [
+          { name: "Ep 1", url: "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8" }
+        ]
+      },
+      {
+        title: "Tears of Steel",
+        category: "Drama",
+        badge: "DRAMA",
+        poster: "https://upload.wikimedia.org/wikipedia/commons/7/70/Tears_of_Steel_poster.jpg",
+        episodes: [
+          { name: "Ep 1", url: "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8" },
+          { name: "Ep 2", url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+        ]
+      },
+      {
+        title: "Sintel",
+        category: "Movie",
+        badge: "4K",
+        poster: "https://upload.wikimedia.org/wikipedia/commons/8/8f/Sintel_poster.jpg",
+        episodes: [
+          { name: "Full Movie", url: "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8" }
+        ]
+      }
+    ];
+
+    const video = document.getElementById('player');
+    let hls = null;
+    let currentCategory = 'all';
+    let activeEpisode = null;
+    let downloads = JSON.parse(localStorage.getItem('mystream_downloads_v2') || '[]');
+
+    function loadVideo(url, label, btnElement, showTitle, epName) {
+      document.getElementById('nowPlaying').innerText = label;
+      document.querySelectorAll('.ep-btn').forEach(b => b.classList.remove('active'));
+      if (btnElement) btnElement.classList.add('active');
+
+      activeEpisode = { title: label, url: url, showTitle: showTitle, epName: epName };
+
+      if (hls) { hls.destroy(); }
+      if (Hls.isSupported()) {
+        hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.play();
+      }
+    }
+
+    function selectShow(index) {
+      const show = catalog[index];
+      const epContainer = document.getElementById('episodeList');
+      epContainer.innerHTML = '';
+
+      show.episodes.forEach((ep, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'ep-btn' + (i === 0 ? ' active' : '');
+        btn.innerText = ep.name;
+        btn.onclick = () => loadVideo(ep.url, `${show.title} - ${ep.name}`, btn, show.title, ep.name);
+        epContainer.appendChild(btn);
+      });
+
+      loadVideo(show.episodes[0].url, `${show.title} - ${show.episodes[0].name}`, epContainer.firstChild, show.title, show.episodes[0].name);
+    }
+
+    function downloadCurrentEpisode() {
+      if (!activeEpisode) return;
+      const res = document.getElementById('resolutionSelect').value;
+      const downloadEntry = {
+        title: `${activeEpisode.title} [${res}]`,
+        url: activeEpisode.url,
+        resolution: res
+      };
+
+      if (downloads.some(d => d.url === activeEpisode.url && d.resolution === res)) {
+        alert(`Episode already downloaded in ${res}!`);
+        return;
+      }
+
+      downloads.push(downloadEntry);
+      localStorage.setItem('mystream_downloads_v2', JSON.stringify(downloads));
+      updateDownloadsUI();
+      alert(`Successfully downloaded ${activeEpisode.title} in ${res}`);
+    }
+
+    function removeDownload(index) {
+      downloads.splice(index, 1);
+      localStorage.setItem('mystream_downloads_v2', JSON.stringify(downloads));
+      updateDownloadsUI();
+    }
+
+    function updateDownloadsUI() {
+      document.getElementById('dlCount').innerText = downloads.length;
+      const list = document.getElementById('downloadsList');
+      list.innerHTML = '';
+      if (downloads.length === 0) {
+        list.innerHTML = '<div style="color:var(--muted); font-size:13px; text-align:center; padding: 20px;">No downloaded episodes yet.</div>';
+        return;
+      }
+      downloads.forEach((item, index) => {
+        list.innerHTML += `
+          <div class="download-item">
+            <div class="download-info" onclick="playDownload(${index})">
+              <div class="download-title">${item.title}</div>
+              <div class="download-status">✓ Offline Ready (${item.resolution})</div>
+            </div>
+            <button class="delete-dl" onclick="removeDownload(${index})">🗑️</button>
+          </div>
+        `;
+      });
+    }
+
+    function playDownload(index) {
+      const item = downloads[index];
+      switchTab('home', document.querySelector('.tab'));
+      loadVideo(item.url, item.title, null);
+    }
+
+    function switchTab(viewName, tabEl, cat = 'all') {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tabEl.classList.add('active');
+
+      document.getElementById('homeView').classList.remove('active');
+      document.getElementById('downloadsView').classList.remove('active');
+
+      if (viewName === 'downloads') {
+        document.getElementById('downloadsView').classList.add('active');
+        updateDownloadsUI();
+      } else {
+        document.getElementById('homeView').classList.add('active');
+        currentCategory = cat;
+        document.getElementById('sectionHeading').innerText = cat === 'all' ? 'Featured & Chinese Donghua' : (cat === 'Donghua' ? 'Chinese Donghua' : cat);
+        filterCatalog();
+      }
+    }
+
+    function renderGrid(items) {
+      const grid = document.getElementById('catalogGrid');
+      grid.innerHTML = '';
+      items.forEach((item) => {
+        const originalIndex = catalog.indexOf(item);
+        grid.innerHTML += `
+          <div class="card" onclick="selectShow(${originalIndex})">
+            <div class="poster" style="background-image: url('${item.poster}')">
+              <div class="badge">${item.badge}</div>
+            </div>
+            <div class="title">${item.title}</div>
+          </div>
+        `;
+      });
+    }
+
+    function filterCatalog() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const filtered = catalog.filter(item => {
+        const matchesCat = currentCategory === 'all' || item.category === currentCategory;
+        const matchesSearch = item.title.toLowerCase().includes(query);
+        return matchesCat && matchesSearch;
+      });
+      renderGrid(filtered);
+    }
+
+    renderGrid(catalog);
+    selectShow(0);
+    updateDownloadsUI();
+  </script>
+</body>
+</html>
